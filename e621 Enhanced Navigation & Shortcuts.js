@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         e621 Enhanced Navigation & Shortcuts
 // @namespace    https://github.com/Webscratcher/UserScripts
-// @version      1.3.6
+// @version      1.3.7
 // @license      GPL3
 // @description  Enhances e621 with keyboard shortcuts for voting, favoriting, and navigation. Features auto-skip for blacklisted content, improved pool navigation, and smart behavior that disables shortcuts when typing or using video player.
 // @author       Webscratcher
@@ -24,12 +24,13 @@ const CONFIG = {
     TOGGLE_AUTOSKIP: { key: "KeyP", requiresShift: false },
   },
   selectors: {
-    voteButtons: "div.image-vote-buttons",
-    upvoteButton: "div.image-vote-buttons > a.post-vote-up-link > span",
-    downvoteButton: "div.image-vote-buttons > a.post-vote-down-link > span",
-    favoriteButton: "button#add-fav-button",
-    unvaforiteButton: "button#remove-fav-button",
+    votesBox: "#ptbr-wrapper > div.ptbr-vote",
+    upvoteButton: "button:first-child",
+    downvoteButton: "button:nth-child(3)",
+    favoriteButton: "div.ptbr-favorite > button",
+    unvaforiteButton: "div.ptbr-favorite > button",
     imageViewer: "img#image",
+    wikiButtons: "a.tag-list-wiki",
     navigation: {
       next: "div#nav-links-top > div > ul > li > a.nav-link.next",
       prev: "div#nav-links-top > div > ul > li > a.nav-link.prev",
@@ -135,28 +136,29 @@ class VoteManager {
   constructor(domManager) {
     this.dom = domManager;
   }
+  
+  getVoteScore() {
+    const voteBox = this.dom.getElement("voteBox");
+    return voteBox.dataset.vote;
+  }
 
   isAlreadyUpvoted() {
-    const upvoteButton = this.dom.getElement("upvoteButton");
-
-    return upvoteButton.classList.contains("score-positive");
+    return this.getVoteScore() == "1";
   }
 
   isAlreadyDownvoted() {
-    const downvoteButton = this.dom.getElement("downvoteButton");
-
-    return downvoteButton.classList.contains("score-negative");
+    return this.getVoteScore() == "-1";
   }
 
   isAlreadyFavorited() {
     const favoriteButton = this.dom.getElement("favoriteButton");
-    return !Utils.isElementVisible(favoriteButton);
+    return favoriteButton.attributes["favorited"].value == "true";
   }
 
   async upvote() {
     if (!this.isAlreadyUpvoted()) {
       const upvoteButton = this.dom
-        .getElement("voteButtons")
+        .getElement("voteBox")
         ?.querySelector(CONFIG.selectors.upvoteButton);
       upvoteButton?.click();
       await Utils.sleep(CONFIG.delays.voteDelay);
@@ -168,7 +170,7 @@ class VoteManager {
   async downvote() {
     if (!this.isAlreadyDownvoted()) {
       const downvoteButton = this.dom
-        .getElement("voteButtons")
+        .getElement("voteBox")
         ?.querySelector(CONFIG.selectors.downvoteButton);
       downvoteButton?.click();
       await Utils.sleep(CONFIG.delays.voteDelay);
@@ -730,6 +732,13 @@ class SiteModifier {
 
     poolLink.target = "_blank";
   }
+  
+  openWikiLinksInNewTab() {
+    const wikiElements = document.querySelectorAll(CONFIG.selectors.wikiButtons);
+    wikiElements.forEach(wikiLink => {
+      wikiLink.target = "_blank";
+    });
+  }
 }
 
 // Main App
@@ -801,6 +810,7 @@ class App {
     await this.blacklistManager.openBlacklist();
     this.poolManager.addCopyPoolID();
     this.siteModifier.poolLinkOpenInNewTab();
+    this.siteModifier.openWikiLinksInNewTab();
 
     // Create the progress bar if not already created
     this.autoSkipManager.createProgressBar();
