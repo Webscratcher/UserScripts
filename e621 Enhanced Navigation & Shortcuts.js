@@ -24,7 +24,7 @@ const CONFIG = {
     TOGGLE_AUTOSKIP: { key: "KeyP", requiresShift: false },
   },
   selectors: {
-    votesBox: "#ptbr-wrapper > div.ptbr-vote",
+    voteBox: "#ptbr-wrapper > div.ptbr-vote",
     upvoteButton: "button:first-child",
     downvoteButton: "button:nth-child(3)",
     favoriteButton: "div.ptbr-favorite > button",
