@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         e621 Enhanced Navigation & Shortcuts
 // @namespace    https://github.com/Webscratcher/UserScripts
-// @version      1.3.7
+// @version      1.3.8
 // @license      GPL3
 // @description  Enhances e621 with keyboard shortcuts for voting, favoriting, and navigation. Features auto-skip for blacklisted content, improved pool navigation, and smart behavior that disables shortcuts when typing or using video player.
 // @author       Webscratcher
@@ -24,9 +24,9 @@ const CONFIG = {
     TOGGLE_AUTOSKIP: { key: "KeyP", requiresShift: false },
   },
   selectors: {
-    voteBox: "#ptbr-wrapper > div.ptbr-vote",
+    voteBox: "#ptbr-wrapper div.ptbr-vote",
     upvoteButton: "button:first-child",
-    downvoteButton: "button:nth-child(3)",
+    downvoteButton: "button:nth-child(4)",
     favoriteButton: "div.ptbr-favorite > button",
     unvaforiteButton: "div.ptbr-favorite > button",
     imageViewer: "img#image",
