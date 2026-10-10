@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         e621 Enhanced Navigation & Shortcuts
 // @namespace    https://github.com/Webscratcher/UserScripts
-// @version      1.3.9
+// @version      1.4.0
 // @license      GPL3
 // @description  Enhances e621 with keyboard shortcuts for voting, favoriting, and navigation. Features auto-skip for blacklisted content, improved pool navigation, and smart behavior that disables shortcuts when typing or using video player.
 // @author       Webscratcher
@@ -31,6 +31,7 @@ const CONFIG = {
     unvaforiteButton: "div.ptbr-favorite > button",
     imageViewer: "img#image",
     mediaContainer: "media-container",
+    siteUserScript: "script#site-user",
     wikiButtons: "a.tag-list-wiki",
     navigation: {
       next: "div#nav-links-top > div > ul > li > a.nav-link.next",
@@ -128,12 +129,6 @@ class DOMManager {
     return this.elements.get(key);
   }
 
-  getMetaData(key) {
-    const metaTag = document.querySelector(`meta[name="${key}"]`);
-    if (!metaTag) return null;
-
-    return metaTag.getAttribute("content");
-  }
 }
 
 // Vote Manager
@@ -218,19 +213,27 @@ class NavigationManager {
 }
 
 class UserActions {
-  constructor(domManager) {
-    this.domManager = domManager;
+  constructor() {
     this.LOCAL_STORAGE_KEY = "myCachedUsername";
     this.EXPIRATION_MS = 24 * 60 * 60 * 1000; // 1 day
   }
 
-  // 1. Try to read the username from the meta tag
-  getUsernameFromMeta() {
-    const metaData = this.domManager.getMetaData("current-user-name");
-    if (!metaData) {
+  // 1. Try to read the username from the base64-encoded site-user script tag
+  getUsernameFromSiteData() {
+    const scriptTag = document.querySelector(CONFIG.selectors.siteUserScript);
+    if (!scriptTag?.textContent) return null;
+
+    try {
+      // The tag holds UTF-8 encoded JSON, so decode the base64 bytes explicitly
+      const bytes = Uint8Array.from(atob(scriptTag.textContent.trim()), (c) =>
+        c.charCodeAt(0),
+      );
+      const siteData = JSON.parse(new TextDecoder().decode(bytes));
+      return typeof siteData?.name === "string" && siteData.name
+        ? siteData.name
+        : null;
+    } catch {
       return null;
-    } else {
-      return metaData;
     }
   }
 
@@ -262,8 +265,8 @@ class UserActions {
     let username = this.getStoredUsername();
     if (username) return username;
 
-    // Then, check the meta tag
-    username = this.getUsernameFromMeta();
+    // Then, check the site-user script tag
+    username = this.getUsernameFromSiteData();
     if (!username) {
       // Fallback to asking the user
       username = prompt("Please enter your username:")?.trim() || "";
@@ -754,7 +757,7 @@ class App {
     this.navigationManager = new NavigationManager(this.domManager);
     this.blacklistManager = new BlacklistManager(this.domManager);
     this.poolManager = new PoolManager(this.domManager);
-    this.userActions = new UserActions(this.domManager);
+    this.userActions = new UserActions();
     this.autoSkipManager = new AutoSkipManager(
       this.domManager,
       this.navigationManager,
