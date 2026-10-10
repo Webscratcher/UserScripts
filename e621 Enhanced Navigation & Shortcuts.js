@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         e621 Enhanced Navigation & Shortcuts
 // @namespace    https://github.com/Webscratcher/UserScripts
-// @version      1.3.8
+// @version      1.3.9
 // @license      GPL3
 // @description  Enhances e621 with keyboard shortcuts for voting, favoriting, and navigation. Features auto-skip for blacklisted content, improved pool navigation, and smart behavior that disables shortcuts when typing or using video player.
 // @author       Webscratcher
@@ -30,6 +30,7 @@ const CONFIG = {
     favoriteButton: "div.ptbr-favorite > button",
     unvaforiteButton: "div.ptbr-favorite > button",
     imageViewer: "img#image",
+    mediaContainer: "media-container",
     wikiButtons: "a.tag-list-wiki",
     navigation: {
       next: "div#nav-links-top > div > ul > li > a.nav-link.next",
@@ -77,10 +78,14 @@ class Utils {
     const activeElement = document.activeElement;
     if (!activeElement) return false;
 
-    const interactiveElements = ["INPUT", "TEXTAREA", "SELECT", "VIDEO"];
+    const interactiveElements = ["INPUT", "TEXTAREA", "SELECT"];
+    const mediaContainer = document.querySelector(CONFIG.selectors.mediaContainer);
+    const isMediaContainerFocused =
+      mediaContainer && mediaContainer.contains(activeElement);
     return (
       (interactiveElements.includes(activeElement.tagName) ||
-        activeElement.isContentEditable) &&
+        activeElement.isContentEditable ||
+        isMediaContainerFocused) &&
       Utils.isElementVisible(activeElement)
     );
   }
