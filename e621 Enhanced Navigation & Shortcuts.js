@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         e621 Enhanced Navigation & Shortcuts
 // @namespace    https://github.com/Webscratcher/UserScripts
-// @version      1.6.0
+// @version      1.7.0
 // @license      GPL3
 // @description  Enhances e621 with keyboard shortcuts for voting, favoriting, and navigation. Features auto-skip for blacklisted content, improved pool navigation, and smart behavior that disables shortcuts when typing or using video player.
 // @author       Webscratcher
@@ -765,6 +765,7 @@ class SettingsManager {
   static DEFAULTS = {
     autoSkipDelay: CONFIG.delays.autoSkipDelay,
     blacklistView: "timeout", // "skip" | "timeout" | "nothing"
+    blurFilteredPosts: true,
   };
 
   static load() {
@@ -784,24 +785,36 @@ class SettingsManager {
 
   constructor() {
     this.settings = SettingsManager.load();
-    this.panel = null;
+    this.section = null;
   }
 
   initialize() {
-    const layout = document.querySelector(".settings-layout");
+    const form = document.querySelector(".settings-layout > form");
     const navList = document.querySelector(".settings-nav-list");
-    if (!layout || !navList) return;
+    if (!form || !navList) return;
 
-    this.panel = this.injectPanel(layout);
+    this.section = this.injectSection(form);
     this.injectStyles();
     const tabLink = this.injectTabLink(navList);
     this.injectMobileOption();
-    tabLink.addEventListener("click", (event) => {
-      event.preventDefault();
-      this.activate();
+
+    // e621 switches its settings sections client-side (clicks never navigate),
+    // so coexist with their handler: for our link, swap to our section; for
+    // native links, their handler runs and we only make sure our own section
+    // is hidden and no longer marked as current
+    navList.addEventListener("click", (event) => {
+      const link = event.target.closest("a[data-section]");
+      if (!link) return;
+      if (link.dataset.section === "extension") {
+        event.preventDefault();
+        this.activate();
+      } else {
+        this.section.hidden = true;
+        tabLink.removeAttribute("aria-current");
+      }
     });
 
-    // Direct visits to ?tab=extension land on the server's default panel;
+    // Direct visits to ?tab=extension land on the server's default section;
     // swap in ours so the deep link works after reloads
     if (new URLSearchParams(window.location.search).get("tab") === "extension") {
       this.activate();
@@ -830,55 +843,68 @@ class SettingsManager {
     select.appendChild(option);
   }
 
-  injectPanel(layout) {
-    const panel = document.createElement("section");
-    panel.id = "extension-settings-panel";
-    panel.style.display = "none";
-    panel.innerHTML = `
-      <h2>Extension Settings</h2>
-      <p class="extension-settings-hint">Settings for the "e621 Enhanced Navigation &amp; Shortcuts" userscript. Stored locally in this browser, not in your e621 account.</p>
-      <div class="extension-setting">
-        <label for="extension-auto-skip-delay">Auto-skip countdown (seconds)</label>
-        <input type="number" id="extension-auto-skip-delay" min="0" max="60" step="1">
-      </div>
-      <div class="extension-setting">
-        <label for="extension-blacklist-view">When viewing a blacklisted post</label>
-        <select id="extension-blacklist-view">
-          <option value="timeout">Show countdown, then skip</option>
-          <option value="skip">Skip directly</option>
-          <option value="nothing">Do nothing</option>
-        </select>
-      </div>
-      <button type="button" id="extension-settings-save" class="st-button">Save</button>
-      <span id="extension-settings-saved" class="extension-settings-saved"></span>
+  injectSection(form) {
+    const section = document.createElement("section");
+    section.className = "settings-section";
+    section.id = "settings-extension";
+    section.dataset.section = "extension";
+    section.hidden = true;
+    section.innerHTML = `
+      <settings-group name="auto-skip">Auto-Skip</settings-group>
+      <settings-entry class="inline">
+        <settings-head><label for="extension-auto-skip-delay">Auto-skip countdown (seconds)</label></settings-head>
+        <settings-body><input type="number" id="extension-auto-skip-delay" min="0" max="60" step="1"></settings-body>
+        <settings-hint>Seconds to show the countdown before skipping a blacklisted post (0 to 60).</settings-hint>
+      </settings-entry>
+      <settings-entry>
+        <settings-head><label for="extension-blacklist-view">When viewing a blacklisted post</label></settings-head>
+        <settings-body>
+          <select id="extension-blacklist-view">
+            <option value="timeout">Show countdown, then skip</option>
+            <option value="skip">Skip directly</option>
+            <option value="nothing">Do nothing</option>
+          </select>
+        </settings-body>
+        <settings-hint>How the script handles a post that your filters match when you open it.</settings-hint>
+      </settings-entry>
+      <settings-group name="posts-view">Posts View</settings-group>
+      <settings-entry class="inline">
+        <settings-head><label for="extension-blur-filtered">Show filtered posts blurred</label></settings-head>
+        <settings-body><input type="checkbox" id="extension-blur-filtered"></settings-body>
+        <settings-hint>Blurred previews unblur on hover. When off, e621's default applies and filtered posts are hidden entirely.</settings-hint>
+      </settings-entry>
+      <settings-entry class="bigtext">
+        <settings-hint>All extension settings are stored locally in this browser, not in your e621 account. The Save Settings button saves them along with the site's own settings; changes apply on the next page load.</settings-hint>
+      </settings-entry>
     `;
-    layout.appendChild(panel);
+    form.appendChild(section);
 
-    panel.querySelector("#extension-auto-skip-delay").value =
+    section.querySelector("#extension-auto-skip-delay").value =
       this.settings.autoSkipDelay;
-    panel.querySelector("#extension-blacklist-view").value =
+    section.querySelector("#extension-blacklist-view").value =
       this.settings.blacklistView;
+    section.querySelector("#extension-blur-filtered").checked =
+      this.settings.blurFilteredPosts;
 
-    panel
-      .querySelector("#extension-settings-save")
-      .addEventListener("click", () => {
-        this.settings.autoSkipDelay = this.clampTimeout(
-          Number(panel.querySelector("#extension-auto-skip-delay").value),
-        );
-        panel.querySelector("#extension-auto-skip-delay").value =
-          this.settings.autoSkipDelay;
-        this.settings.blacklistView = panel.querySelector(
-          "#extension-blacklist-view",
-        ).value;
-        SettingsManager.save(this.settings);
-        const saved = panel.querySelector("#extension-settings-saved");
-        saved.textContent = "Saved";
-        setTimeout(() => {
-          saved.textContent = "";
-        }, 2000);
-      });
+    // the site's own Save Settings button submits this form on every tab; when
+    // the Extension tab is visible, that submission persists our fields too
+    form.addEventListener("submit", () => {
+      if (section.hidden) return;
+      this.settings.autoSkipDelay = this.clampTimeout(
+        Number(section.querySelector("#extension-auto-skip-delay").value),
+      );
+      section.querySelector("#extension-auto-skip-delay").value =
+        this.settings.autoSkipDelay;
+      this.settings.blacklistView = section.querySelector(
+        "#extension-blacklist-view",
+      ).value;
+      this.settings.blurFilteredPosts = section.querySelector(
+        "#extension-blur-filtered",
+      ).checked;
+      SettingsManager.save(this.settings);
+    });
 
-    return panel;
+    return section;
   }
 
   clampTimeout(value) {
@@ -891,15 +917,22 @@ class SettingsManager {
     const style = document.createElement("style");
     style.id = "extension-settings-style";
     style.textContent = `
-      #extension-settings-panel { padding: 20px; }
-      #extension-settings-panel .extension-setting { display: flex; flex-direction: column; gap: 4px; max-width: 360px; margin-bottom: 16px; }
-      #extension-settings-panel .extension-settings-hint { margin-bottom: 16px; }
-      #extension-settings-panel .extension-settings-saved { margin-left: 8px; }
+      /* push the site's Save Settings button below our section; on native tabs
+         it already renders after the visible section, so the order changes nothing there */
+      .settings-layout > form > settings-submit { order: 1; }
+      /* separate the storage-info box from the entry above it */
+      #settings-extension settings-entry:last-of-type { margin-top: 0.5rem; }
     `;
     document.head.appendChild(style);
   }
 
   activate() {
+    document
+      .querySelectorAll(".settings-layout > form > section.settings-section")
+      .forEach((section) => {
+        section.hidden = section.dataset.section !== "extension";
+      });
+
     document.querySelectorAll(".settings-nav-list a[data-section]").forEach((link) => {
       if (link.dataset.section === "extension") {
         link.setAttribute("aria-current", "true");
@@ -908,10 +941,46 @@ class SettingsManager {
       }
     });
 
-    const serverForm = document.querySelector(".settings-layout > form");
-    if (serverForm) serverForm.style.display = "none";
-    this.panel.style.display = "block";
     window.history.replaceState(null, "", "?tab=extension");
+  }
+}
+
+// Blurred Preview Manager — shows posts hidden by the user's filters as blurred
+// previews that unblur on hover, instead of e621's default of hiding them
+// entirely in the posts index
+class BlurredPreviewManager {
+  initialize() {
+    if (!SettingsManager.load().blurFilteredPosts) return;
+    if (document.getElementById("extension-blur-style")) return;
+
+    const style = document.createElement("style");
+    style.id = "extension-blur-style";
+    // e621 hides filtered previews with #c-posts #a-index .thumbnail.blacklisted
+    // { display: none !important }, hides the preview img itself with
+    // article.thumbnail.blacklisted img { visibility: hidden } and shows a
+    // "blacklisted" ::before banner on the link — the overrides mirror that
+    // selector scope one element deeper to out-rank all three
+    style.textContent = `
+      #c-posts #a-index article.thumbnail.blacklisted,
+      #c-popular article.thumbnail.blacklisted,
+      #c-favorites article.thumbnail.blacklisted { display: flex !important; }
+
+      #c-posts #a-index article.thumbnail.blacklisted img,
+      #c-popular article.thumbnail.blacklisted img,
+      #c-favorites article.thumbnail.blacklisted img { visibility: visible !important; filter: blur(28px) saturate(0.85); transition: filter 0.15s ease; }
+
+      #c-posts #a-index article.thumbnail.blacklisted a.thm-link::before,
+      #c-popular article.thumbnail.blacklisted a.thm-link::before,
+      #c-favorites article.thumbnail.blacklisted a.thm-link::before { content: none !important; }
+
+      #c-posts #a-index article.thumbnail.blacklisted:hover img,
+      #c-popular article.thumbnail.blacklisted:hover img,
+      #c-favorites article.thumbnail.blacklisted:hover img,
+      #c-posts #a-index article.thumbnail.blacklisted:focus-within img,
+      #c-popular article.thumbnail.blacklisted:focus-within img,
+      #c-favorites article.thumbnail.blacklisted:focus-within img { filter: none; }
+    `;
+    document.head.appendChild(style);
   }
 }
 
@@ -1005,5 +1074,6 @@ window.addEventListener("load", () => {
 
   const app = new App();
   app.initialize().catch(console.error);
+  new BlurredPreviewManager().initialize();
   console.log("Extended Shortcuts with Auto-Skip loaded :)");
 });
