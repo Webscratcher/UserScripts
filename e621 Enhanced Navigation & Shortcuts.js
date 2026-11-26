@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         e621 Enhanced Navigation & Shortcuts
 // @namespace    https://github.com/Webscratcher/UserScripts
-// @version      1.7.1
+// @version      1.8.0
 // @license      GPL3
 // @description  Enhances e621 with keyboard shortcuts for voting, favoriting, and navigation. Features auto-skip for blacklisted content, improved pool navigation, and smart behavior that disables shortcuts when typing or using video player.
 // @author       Webscratcher
@@ -43,7 +43,7 @@ const CONFIG = {
       panel: "section.blacklist-ui:not(.blacklist-inline)",
       header: ".blacklist-header",
       toggleAll: ".blacklist-toggle-all",
-      blacklistedContent: "#image-container.blacklisted",
+      container: "#image-container",
     },
     pool: {
       nav: "#nav-links-top",
@@ -384,12 +384,30 @@ class BlacklistManager {
     }
   }
 
-  isImageBlacklisted() {
-    // Check for the blacklisted image placeholder
-    return (
-      document.querySelector(CONFIG.selectors.blacklist.blacklistedContent) !==
-      null
+  // Whether the vote-aware filter logic applies to the current post: it does for
+  // posts matching the user's blacklists, unless the post was upvoted or
+  // favorited (exempt), and for downvoted posts when treatDownvoted is enabled
+  isPostActionable() {
+    const settings = SettingsManager.load();
+    const container = document.querySelector(
+      CONFIG.selectors.blacklist.container,
     );
+    const siteBlacklisted =
+      container?.classList.contains("blacklisted") ?? false;
+
+    // live vote state from the site's widgets, falling back to the
+    // container's server-rendered attributes
+    const voteBox = document.querySelector(CONFIG.selectors.voteBox);
+    const favBtn = document.querySelector(CONFIG.selectors.favoriteButton);
+    const vote = voteBox?.dataset.vote ?? container?.dataset.vote;
+    const favorited = favBtn
+      ? favBtn.getAttribute("favorited") === "true"
+      : container?.dataset.isFavorited === "true";
+
+    if (settings.exemptVotedPosts && (vote === "1" || favorited)) return false;
+    if (siteBlacklisted) return true;
+    if (settings.treatDownvoted && vote === "-1") return true;
+    return false;
   }
 }
 
@@ -457,7 +475,7 @@ class AutoSkipManager {
 
   createProgressBar() {
     // Only create if we're on a blacklisted image
-    if (!this.blacklistManager.isImageBlacklisted()) {
+    if (!this.blacklistManager.isPostActionable()) {
       return null;
     }
 
@@ -543,7 +561,7 @@ class AutoSkipManager {
         );
         this.progressBarContainer = null;
       }
-    } else if (this.enabled && this.blacklistManager.isImageBlacklisted()) {
+    } else if (this.enabled && this.blacklistManager.isPostActionable()) {
       // If we're enabling and on a blacklisted image, start the skip
       this.resumeOnBlacklisted();
     }
@@ -579,7 +597,7 @@ class AutoSkipManager {
     if (!this.enabled || this.skipTimer) return;
 
     // Only create and start timer if we're on a blacklisted image
-    if (!this.blacklistManager.isImageBlacklisted()) return;
+    if (!this.blacklistManager.isPostActionable()) return;
 
     // Make sure we have a progress bar
     if (!this.progressBarContainer) {
@@ -625,7 +643,7 @@ class AutoSkipManager {
 
   checkAndStartSkip() {
     // Check if current image is blacklisted and start timer if needed
-    if (this.blacklistManager.isImageBlacklisted() && this.enabled) {
+    if (this.blacklistManager.isPostActionable() && this.enabled) {
       // Clean up any existing progress bar
       if (this.progressBarContainer && this.progressBarContainer.parentNode) {
         this.progressBarContainer.parentNode.removeChild(
@@ -643,7 +661,7 @@ class AutoSkipManager {
       // Start a fresh countdown
       this.resumeOnBlacklisted();
     } else if (
-      !this.blacklistManager.isImageBlacklisted() &&
+      !this.blacklistManager.isPostActionable() &&
       this.progressBarContainer
     ) {
       // If we're not on a blacklisted image but have a progress bar, remove it
@@ -766,6 +784,8 @@ class SettingsManager {
     autoSkipDelay: CONFIG.delays.autoSkipDelay,
     blacklistView: "timeout", // "skip" | "timeout" | "nothing"
     blurFilteredPosts: true,
+    exemptVotedPosts: true,
+    treatDownvoted: true,
   };
 
   static load() {
@@ -873,6 +893,17 @@ class SettingsManager {
         <settings-body><input type="checkbox" id="extension-blur-filtered"></settings-body>
         <settings-hint>Blurred previews unblur on hover. When off, e621's default applies and filtered posts are hidden entirely.</settings-hint>
       </settings-entry>
+      <settings-group name="voting">Voting</settings-group>
+      <settings-entry class="inline">
+        <settings-head><label for="extension-exempt-voted">Never skip or blur upvoted/favorited posts</label></settings-head>
+        <settings-body><input type="checkbox" id="extension-exempt-voted"></settings-body>
+        <settings-hint>Posts you've upvoted or favorited are shown normally and never skipped, even when your filters match them.</settings-hint>
+      </settings-entry>
+      <settings-entry class="inline">
+        <settings-head><label for="extension-treat-downvoted">Treat downvoted posts like blacklisted ones</label></settings-head>
+        <settings-body><input type="checkbox" id="extension-treat-downvoted"></settings-body>
+        <settings-hint>Downvoted posts get the same blur and countdown/skip behavior as filtered posts, even without matching filters.</settings-hint>
+      </settings-entry>
       <settings-entry class="bigtext">
         <settings-hint>All extension settings are stored locally in this browser, not in your e621 account. The Save Settings button saves them along with the site's own settings; changes apply on the next page load.</settings-hint>
       </settings-entry>
@@ -885,6 +916,10 @@ class SettingsManager {
       this.settings.blacklistView;
     section.querySelector("#extension-blur-filtered").checked =
       this.settings.blurFilteredPosts;
+    section.querySelector("#extension-exempt-voted").checked =
+      this.settings.exemptVotedPosts;
+    section.querySelector("#extension-treat-downvoted").checked =
+      this.settings.treatDownvoted;
 
     // the site's own Save Settings button submits this form on every tab; when
     // the Extension tab is visible, that submission persists our fields too
@@ -900,6 +935,12 @@ class SettingsManager {
       ).value;
       this.settings.blurFilteredPosts = section.querySelector(
         "#extension-blur-filtered",
+      ).checked;
+      this.settings.exemptVotedPosts = section.querySelector(
+        "#extension-exempt-voted",
+      ).checked;
+      this.settings.treatDownvoted = section.querySelector(
+        "#extension-treat-downvoted",
       ).checked;
       SettingsManager.save(this.settings);
     });
@@ -947,7 +988,9 @@ class SettingsManager {
 
 // Blurred Preview Manager — shows posts hidden by the user's filters as blurred
 // previews that unblur on hover, instead of e621's default of hiding them
-// entirely in the posts index
+// entirely in the posts index. Vote-aware marking: posts the user upvoted or
+// favorited are exempt (rendered normally), downvoted posts get the blur
+// treatment even without matching filters
 class BlurredPreviewManager {
   initialize() {
     if (!SettingsManager.load().blurFilteredPosts) return;
@@ -1001,8 +1044,62 @@ class BlurredPreviewManager {
       #c-posts #a-show article.thumbnail.blacklisted a.thm-link::before { content: none !important; }
       #c-posts #a-show article.thumbnail.blacklisted:hover img,
       #c-posts #a-show article.thumbnail.blacklisted:focus-within img { filter: none; }
+
+      /* vote-aware exceptions: exempt posts render normally, downvoted posts
+         get the blur treatment via our own marker class */
+      #c-posts #a-index article.thumbnail.blacklisted.ext-exempt img,
+      #c-popular article.thumbnail.blacklisted.ext-exempt img,
+      #c-favorites article.thumbnail.blacklisted.ext-exempt img,
+      #c-posts #a-show article.thumbnail.blacklisted.ext-exempt img { filter: none; }
+
+      #c-posts #a-show #image-container.blacklisted.ext-exempt img,
+      #c-posts #a-show #image-container.blacklisted.ext-exempt video { filter: none; }
+
+      article.thumbnail.ext-blur img {
+        filter: blur(28px) saturate(0.85);
+        transition: filter 0.15s ease;
+      }
+      article.thumbnail.ext-blur:hover img,
+      article.thumbnail.ext-blur:focus-within img { filter: none; }
+
+      #c-posts #a-show #image-container.ext-blur img,
+      #c-posts #a-show #image-container.ext-blur video {
+        filter: blur(28px) saturate(0.85);
+        transition: filter 0.15s ease;
+      }
+      #c-posts #a-show #image-container.ext-blur:hover img,
+      #c-posts #a-show #image-container.ext-blur:hover video,
+      #c-posts #a-show #image-container.ext-blur:focus-within img,
+      #c-posts #a-show #image-container.ext-blur:focus-within video { filter: none; }
     `;
     document.head.appendChild(style);
+    this.applyMarkers();
+  }
+
+  // Tag every post element with our vote-aware marker classes so the CSS above
+  // can tell exempt (upvoted/favorited) and downvoted posts apart
+  applyMarkers() {
+    const settings = SettingsManager.load();
+    const blurOn = settings.blurFilteredPosts;
+
+    const elements = [
+      document.querySelector(CONFIG.selectors.blacklist.container),
+      ...document.querySelectorAll("article.thumbnail"),
+    ];
+    for (const el of elements) {
+      if (!el) continue;
+      const favorited = el.dataset.isFavorited === "true";
+      const upvoted = el.dataset.vote === "1";
+      const downvoted = el.dataset.vote === "-1";
+      const blacklisted = el.classList.contains("blacklisted");
+
+      // classList.toggle only writes when the state differs; an unconditional
+      // remove/add cycle would keep firing our own observers forever
+      const exempt = blurOn && settings.exemptVotedPosts && (upvoted || favorited) && blacklisted;
+      const blur = blurOn && !exempt && settings.treatDownvoted && downvoted;
+      el.classList.toggle("ext-exempt", exempt);
+      el.classList.toggle("ext-blur", blur);
+    }
   }
 }
 
@@ -1028,35 +1125,59 @@ class App {
       this.autoSkipManager,
     );
     this.siteModifier = new SiteModifier(this.domManager);
+    this.blurredPreview = new BlurredPreviewManager();
 
     // Set up mutation observer to detect page content changes
     this.setupMutationObserver();
   }
 
+  // Re-run the vote-aware decisions whenever anything they read changes:
+  // container class/vote state, the live vote widgets, or new grid posts
+  reevaluate() {
+    this.blurredPreview.applyMarkers();
+    this.autoSkipManager.checkAndStartSkip();
+  }
+
   setupMutationObserver() {
     // Only observe the specific container that would indicate a blacklisted image
     const imageContainer = document.querySelector("#image-container");
-    if (!imageContainer) return;
+    if (imageContainer) {
+      // Watch class and vote state changes on the container
+      const observer = new MutationObserver(() => this.reevaluate());
+      observer.observe(imageContainer, {
+        attributes: true,
+        attributeFilter: ["class", "data-vote", "data-is-favorited"],
+      });
+    }
 
-    // Create a focused mutation observer that only watches for blacklist class changes
-    const observer = new MutationObserver((mutations) => {
-      // Only check for actual class changes
-      const hasClassChange = mutations.some(
-        (mutation) =>
-          mutation.type === "attributes" && mutation.attributeName === "class",
+    // Observe the live vote widgets; voting through the site's own buttons
+    // updates these, so the vote-aware decisions follow along
+    const voteBox = document.querySelector(CONFIG.selectors.voteBox);
+    if (voteBox) {
+      new MutationObserver(() => this.reevaluate()).observe(voteBox, {
+        attributes: true,
+        attributeFilter: ["data-vote"],
+      });
+    }
+    const favButton = document.querySelector(CONFIG.selectors.favoriteButton);
+    if (favButton) {
+      new MutationObserver(() => this.reevaluate()).observe(favButton, {
+        attributes: true,
+        attributeFilter: ["favorited"],
+      });
+    }
+
+    // Watch the search grid and recommendation lists for newly added previews
+    const postLists = document.querySelectorAll(
+      "section.posts-container, #post-recommendations-list",
+    );
+    if (postLists.length) {
+      new MutationObserver(() => this.reevaluate()).observe(
+        document.querySelector("section.posts-container") ??
+          document.querySelector("#post-recommendations-list"),
+        { childList: true },
       );
-
-      if (hasClassChange) {
-        // Check if we're on a blacklisted image and should start the auto-skip
-        this.autoSkipManager.checkAndStartSkip();
-      }
-    });
-
-    // Only observe the specific element and only for class changes
-    observer.observe(imageContainer, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
+    }
 
     // Also observe for URL changes, which indicate navigation between posts
     let lastUrl = location.href;
@@ -1065,7 +1186,7 @@ class App {
         lastUrl = location.href;
         // Small delay to ensure the page has updated
         setTimeout(() => {
-          this.autoSkipManager.checkAndStartSkip();
+          this.reevaluate();
         }, 100);
       }
     }, 500);
@@ -1076,12 +1197,13 @@ class App {
     this.poolManager.addCopyPoolID();
     this.siteModifier.poolLinkOpenInNewTab();
     this.siteModifier.openWikiLinksInNewTab();
+    this.blurredPreview.initialize();
 
     // Create the progress bar if not already created
     this.autoSkipManager.createProgressBar();
 
-    // Check for blacklisted image on initial load
-    this.autoSkipManager.checkAndStartSkip();
+    // Apply vote-aware marking and check for actionable posts on initial load
+    this.reevaluate();
   }
 }
 
@@ -1096,6 +1218,5 @@ window.addEventListener("load", () => {
 
   const app = new App();
   app.initialize().catch(console.error);
-  new BlurredPreviewManager().initialize();
   console.log("Extended Shortcuts with Auto-Skip loaded :)");
 });
