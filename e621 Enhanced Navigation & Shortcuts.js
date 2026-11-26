@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         e621 Enhanced Navigation & Shortcuts
 // @namespace    https://github.com/Webscratcher/UserScripts
-// @version      1.7.0
+// @version      1.7.1
 // @license      GPL3
 // @description  Enhances e621 with keyboard shortcuts for voting, favoriting, and navigation. Features auto-skip for blacklisted content, improved pool navigation, and smart behavior that disables shortcuts when typing or using video player.
 // @author       Webscratcher
@@ -958,8 +958,9 @@ class BlurredPreviewManager {
     // e621 hides filtered previews with #c-posts #a-index .thumbnail.blacklisted
     // { display: none !important }, hides the preview img itself with
     // article.thumbnail.blacklisted img { visibility: hidden } and shows a
-    // "blacklisted" ::before banner on the link — the overrides mirror that
-    // selector scope one element deeper to out-rank all three
+    // "blacklisted" ::before banner on the link. On the post page it collapses
+    // #image-container.blacklisted img to 0x0 and paints a banner PNG as its
+    // background. The overrides mirror each scope one element deeper to out-rank them.
     style.textContent = `
       #c-posts #a-index article.thumbnail.blacklisted,
       #c-popular article.thumbnail.blacklisted,
@@ -979,6 +980,27 @@ class BlurredPreviewManager {
       #c-posts #a-index article.thumbnail.blacklisted:focus-within img,
       #c-popular article.thumbnail.blacklisted:focus-within img,
       #c-favorites article.thumbnail.blacklisted:focus-within img { filter: none; }
+
+      /* post page: restore the full image instead of the banner-PNG placeholder */
+      #c-posts #a-show #image-container.blacklisted img,
+      #c-posts #a-show #image-container.blacklisted video {
+        width: auto !important; height: auto !important;
+        padding: 0 !important;
+        background-image: none !important;
+        filter: blur(28px) saturate(0.85);
+        transition: filter 0.15s ease;
+      }
+
+      #c-posts #a-show #image-container.blacklisted:hover img,
+      #c-posts #a-show #image-container.blacklisted:hover video,
+      #c-posts #a-show #image-container.blacklisted:focus-within img,
+      #c-posts #a-show #image-container.blacklisted:focus-within video { filter: none; }
+
+      /* post page: recommended previews use the same banner treatment as the index */
+      #c-posts #a-show article.thumbnail.blacklisted img { visibility: visible !important; filter: blur(28px) saturate(0.85); transition: filter 0.15s ease; }
+      #c-posts #a-show article.thumbnail.blacklisted a.thm-link::before { content: none !important; }
+      #c-posts #a-show article.thumbnail.blacklisted:hover img,
+      #c-posts #a-show article.thumbnail.blacklisted:focus-within img { filter: none; }
     `;
     document.head.appendChild(style);
   }
