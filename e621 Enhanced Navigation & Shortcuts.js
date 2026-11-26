@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         e621 Enhanced Navigation & Shortcuts
 // @namespace    https://github.com/Webscratcher/UserScripts
-// @version      1.4.1
+// @version      1.6.0
 // @license      GPL3
 // @description  Enhances e621 with keyboard shortcuts for voting, favoriting, and navigation. Features auto-skip for blacklisted content, improved pool navigation, and smart behavior that disables shortcuts when typing or using video player.
 // @author       Webscratcher
 // @match        https://e621.net/posts*
+// @match        https://e621.net/users/settings*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=e621.net
 // @grant        unsafeWindow
 // ==/UserScript==
@@ -39,8 +40,9 @@ const CONFIG = {
       searchField: "textarea#tags",
     },
     blacklist: {
-      box: "section#blacklist-box > a",
-      collapse: "#blacklist-collapse",
+      panel: "section.blacklist-ui:not(.blacklist-inline)",
+      header: ".blacklist-header",
+      toggleAll: ".blacklist-toggle-all",
       blacklistedContent: "#image-container.blacklisted",
     },
     pool: {
@@ -365,24 +367,20 @@ class BlacklistManager {
   }
 
   async openBlacklist() {
-    const element = document.querySelector(CONFIG.selectors.blacklist.collapse);
-    if (element?.classList.contains("hidden")) {
-      element.click();
+    const panel = document.querySelector(CONFIG.selectors.blacklist.panel);
+    if (panel?.getAttribute("collapsed") === "true") {
+      panel.querySelector(CONFIG.selectors.blacklist.header)?.click();
       await Utils.sleep(CONFIG.delays.defaultSleep);
     }
   }
 
   async toggleBlacklist() {
-    const toggles = ["disable", "re-enable"];
-    for (const toggle of toggles) {
-      const selector = `${CONFIG.selectors.blacklist.box}${toggle}-all-blacklists`;
-      const element = document.querySelector(selector);
+    const panel = document.querySelector(CONFIG.selectors.blacklist.panel);
+    const toggleButton = panel?.querySelector(CONFIG.selectors.blacklist.toggleAll);
 
-      if (element && Utils.isElementVisible(element)) {
-        element.click();
-        await Utils.sleep(CONFIG.delays.defaultSleep);
-        break;
-      }
+    if (toggleButton) {
+      toggleButton.click();
+      await Utils.sleep(CONFIG.delays.defaultSleep);
     }
   }
 
@@ -441,9 +439,20 @@ class AutoSkipManager {
     this.progressBarElement = null;
     this.progressBarContainer = null;
     this.pauseIndicatorElement = null;
-    this.skipTimeout = CONFIG.delays.autoSkipDelay * 1000;
+    const settings = SettingsManager.load();
+    this.skipTimeout = settings.autoSkipDelay * 1000;
+    this.viewMode = settings.blacklistView; // "skip" | "timeout" | "nothing"
     this.startTime = 0;
     this.enabled = true;
+  }
+
+  // Dispatch a blacklisted post according to the configured view mode
+  resumeOnBlacklisted() {
+    if (this.viewMode === "skip") {
+      this.navigationManager.goToNext();
+    } else if (this.viewMode === "timeout") {
+      this.startAutoSkipCountdown();
+    }
   }
 
   createProgressBar() {
@@ -536,7 +545,7 @@ class AutoSkipManager {
       }
     } else if (this.enabled && this.blacklistManager.isImageBlacklisted()) {
       // If we're enabling and on a blacklisted image, start the skip
-      this.startAutoSkipCountdown();
+      this.resumeOnBlacklisted();
     }
 
     // Show a notification about the state change
@@ -632,7 +641,7 @@ class AutoSkipManager {
       }
 
       // Start a fresh countdown
-      this.startAutoSkipCountdown();
+      this.resumeOnBlacklisted();
     } else if (
       !this.blacklistManager.isImageBlacklisted() &&
       this.progressBarContainer
@@ -749,6 +758,163 @@ class SiteModifier {
   }
 }
 
+// Extension Settings Manager — persists userscript settings in localStorage and
+// renders an "Extension" tab on e621's own settings page (/users/settings)
+class SettingsManager {
+  static STORAGE_KEY = "e621_extension_settings";
+  static DEFAULTS = {
+    autoSkipDelay: CONFIG.delays.autoSkipDelay,
+    blacklistView: "timeout", // "skip" | "timeout" | "nothing"
+  };
+
+  static load() {
+    try {
+      const raw = localStorage.getItem(this.STORAGE_KEY);
+      return raw
+        ? { ...this.DEFAULTS, ...JSON.parse(raw) }
+        : { ...this.DEFAULTS };
+    } catch {
+      return { ...this.DEFAULTS };
+    }
+  }
+
+  static save(settings) {
+    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(settings));
+  }
+
+  constructor() {
+    this.settings = SettingsManager.load();
+    this.panel = null;
+  }
+
+  initialize() {
+    const layout = document.querySelector(".settings-layout");
+    const navList = document.querySelector(".settings-nav-list");
+    if (!layout || !navList) return;
+
+    this.panel = this.injectPanel(layout);
+    this.injectStyles();
+    const tabLink = this.injectTabLink(navList);
+    this.injectMobileOption();
+    tabLink.addEventListener("click", (event) => {
+      event.preventDefault();
+      this.activate();
+    });
+
+    // Direct visits to ?tab=extension land on the server's default panel;
+    // swap in ours so the deep link works after reloads
+    if (new URLSearchParams(window.location.search).get("tab") === "extension") {
+      this.activate();
+    }
+  }
+
+  injectTabLink(navList) {
+    const listItem = document.createElement("li");
+    const link = document.createElement("a");
+    link.dataset.section = "extension";
+    link.href = "?tab=extension";
+    link.textContent = "Extension";
+    listItem.appendChild(link);
+    navList.appendChild(listItem);
+    return link;
+  }
+
+  injectMobileOption() {
+    const select = document.querySelector(
+      'form.settings-nav-select select[name="tab"]',
+    );
+    if (!select) return;
+    const option = document.createElement("option");
+    option.value = "extension";
+    option.textContent = "Extension";
+    select.appendChild(option);
+  }
+
+  injectPanel(layout) {
+    const panel = document.createElement("section");
+    panel.id = "extension-settings-panel";
+    panel.style.display = "none";
+    panel.innerHTML = `
+      <h2>Extension Settings</h2>
+      <p class="extension-settings-hint">Settings for the "e621 Enhanced Navigation &amp; Shortcuts" userscript. Stored locally in this browser, not in your e621 account.</p>
+      <div class="extension-setting">
+        <label for="extension-auto-skip-delay">Auto-skip countdown (seconds)</label>
+        <input type="number" id="extension-auto-skip-delay" min="0" max="60" step="1">
+      </div>
+      <div class="extension-setting">
+        <label for="extension-blacklist-view">When viewing a blacklisted post</label>
+        <select id="extension-blacklist-view">
+          <option value="timeout">Show countdown, then skip</option>
+          <option value="skip">Skip directly</option>
+          <option value="nothing">Do nothing</option>
+        </select>
+      </div>
+      <button type="button" id="extension-settings-save" class="st-button">Save</button>
+      <span id="extension-settings-saved" class="extension-settings-saved"></span>
+    `;
+    layout.appendChild(panel);
+
+    panel.querySelector("#extension-auto-skip-delay").value =
+      this.settings.autoSkipDelay;
+    panel.querySelector("#extension-blacklist-view").value =
+      this.settings.blacklistView;
+
+    panel
+      .querySelector("#extension-settings-save")
+      .addEventListener("click", () => {
+        this.settings.autoSkipDelay = this.clampTimeout(
+          Number(panel.querySelector("#extension-auto-skip-delay").value),
+        );
+        panel.querySelector("#extension-auto-skip-delay").value =
+          this.settings.autoSkipDelay;
+        this.settings.blacklistView = panel.querySelector(
+          "#extension-blacklist-view",
+        ).value;
+        SettingsManager.save(this.settings);
+        const saved = panel.querySelector("#extension-settings-saved");
+        saved.textContent = "Saved";
+        setTimeout(() => {
+          saved.textContent = "";
+        }, 2000);
+      });
+
+    return panel;
+  }
+
+  clampTimeout(value) {
+    if (Number.isNaN(value) || value < 0) return 0;
+    return Math.min(value, 60);
+  }
+
+  injectStyles() {
+    if (document.getElementById("extension-settings-style")) return;
+    const style = document.createElement("style");
+    style.id = "extension-settings-style";
+    style.textContent = `
+      #extension-settings-panel { padding: 20px; }
+      #extension-settings-panel .extension-setting { display: flex; flex-direction: column; gap: 4px; max-width: 360px; margin-bottom: 16px; }
+      #extension-settings-panel .extension-settings-hint { margin-bottom: 16px; }
+      #extension-settings-panel .extension-settings-saved { margin-left: 8px; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  activate() {
+    document.querySelectorAll(".settings-nav-list a[data-section]").forEach((link) => {
+      if (link.dataset.section === "extension") {
+        link.setAttribute("aria-current", "true");
+      } else {
+        link.removeAttribute("aria-current");
+      }
+    });
+
+    const serverForm = document.querySelector(".settings-layout > form");
+    if (serverForm) serverForm.style.display = "none";
+    this.panel.style.display = "block";
+    window.history.replaceState(null, "", "?tab=extension");
+  }
+}
+
 // Main App
 class App {
   constructor() {
@@ -828,8 +994,15 @@ class App {
   }
 }
 
-// Initialize the application when the window loads
+// Initialize the application when the window loads; on the settings page,
+// set up the Extension tab instead of the posts-page features
 window.addEventListener("load", () => {
+  if (window.location.pathname === "/users/settings") {
+    new SettingsManager().initialize();
+    return;
+  }
+  if (!window.location.pathname.startsWith("/posts")) return;
+
   const app = new App();
   app.initialize().catch(console.error);
   console.log("Extended Shortcuts with Auto-Skip loaded :)");
