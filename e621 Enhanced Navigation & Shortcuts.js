@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         e621 Enhanced Navigation & Shortcuts
 // @namespace    https://github.com/Webscratcher/UserScripts
-// @version      1.4.0
+// @version      1.4.1
 // @license      GPL3
 // @description  Enhances e621 with keyboard shortcuts for voting, favoriting, and navigation. Features auto-skip for blacklisted content, improved pool navigation, and smart behavior that disables shortcuts when typing or using video player.
 // @author       Webscratcher
@@ -290,11 +290,11 @@ class UserActions {
     const positiveFavTag = `fav:${username}`;
 
     // Regex to match the exact negative tag: '-fav:<username>' preceded by start or space,
-    // and followed by space or end of string
-    const negativeRegex = new RegExp(`(^|\\s)${negativeFavTag}(?=$|\\s)`, "g");
+    // and followed by space or end of string; case-insensitive so any writing style matches
+    const negativeRegex = new RegExp(`(^|\\s)${negativeFavTag}(?=$|\\s)`, "gi");
     // Regex to match the exact positive tag: 'fav:<username>' preceded by start or space,
-    // and followed by space or end of string
-    const positiveRegex = new RegExp(`(^|\\s)${positiveFavTag}(?=$|\\s)`, "g");
+    // and followed by space or end of string; case-insensitive so any writing style matches
+    const positiveRegex = new RegExp(`(^|\\s)${positiveFavTag}(?=$|\\s)`, "gi");
 
     // Helper to remove all occurrences (positive or negative) from the input
     const removeAllFavTags = (val) => {
